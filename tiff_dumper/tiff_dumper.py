@@ -146,7 +146,7 @@ async def dump_headers(
 
             # Start the consumers.
             for _ in range(n_consumers):
-                tg.start_soon(_consumer, receive, send_output, stores)
+                tg.start_soon(_consumer, receive.clone(), send_output.clone(), stores)
             tg.start_soon(_write_out, receive_output, write_chunk_size, out_dir)
 
             # Start the producer
