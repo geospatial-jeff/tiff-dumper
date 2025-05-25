@@ -1,0 +1,12 @@
+store:
+  name: s3://sentinel-cogs
+  prefixes:
+    - sentinel-s2-l2a-cogs/10/C/DA
+  obstore_config:
+    skip_signature: True
+    region: us-west-2
+concurrency:
+  n_consumers: 100
+  list_chunk_size: 10000
+  max_buffer_size: 1000000
+  write_chunk_size: 100000

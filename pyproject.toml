@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "tiff-dumper"
+version = "0.1.0"
+description = "Benchmark python coroutines in various ways"
+authors = ["geospatial-jeff <geospatialjeff@gmail.com>"]
+license = "apache"
+readme = "README.md"
+packages = [{ include = "tiff_dumper" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = "^2.11.5"
+async-tiff = "0.1.0"
+obstore = "0.6.0"
+PyYAML = "^6.0.2"
+click = "^8.2.1"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.0.1"
+
+[tool.poetry.scripts]
+tiff-dumper = "tiff_dumper.cli:app"
+
+[tool.ruff]
+select = [
+    "I",  # isort formatting.
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
