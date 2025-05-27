@@ -51,8 +51,8 @@ async def _consumer(
 ):
     """Consume"""
     logger.debug("starting consumer")
-    async with receive:
-        async with send_output:
+    async with send_output:
+        async with receive:
             async for item in receive:
                 try:
                     profile = await _get_profile(stores, item)
@@ -111,10 +111,13 @@ async def _write_out(
         )
 
 
-async def _monitor(channel: MemoryObjectSendStream):
+async def _monitor(channel):
     while True:
         await asyncio.sleep(1)
-        print("SEND - ", channel.statistics())
+        stats = channel.statistics()
+        logger.debug(stats)
+        if stats.current_buffer_used == 0 and stats.open_receive_streams == 0:
+            break
 
 
 async def dump_headers(
@@ -144,9 +147,12 @@ async def dump_headers(
             if not quiet:
                 tg.start_soon(_monitor, send)
 
-            # Start the consumers.
-            for _ in range(n_consumers):
-                tg.start_soon(_consumer, receive.clone(), send_output.clone(), stores)
+            # Start the consumers
+            streams = [(receive, send_output)]
+            for _ in range(n_consumers - 1):
+                streams.append((receive.clone(), send_output.clone()))
+            for stream in streams:
+                tg.start_soon(_consumer, *stream, stores)
             tg.start_soon(_write_out, receive_output, write_chunk_size, out_dir)
 
             # Start the producer
