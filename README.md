@@ -67,7 +67,7 @@ The [config file](./config.yaml) checked into the repo lists 235,639 TIFFs and t
 
 ## Why is this so fast?
 
-The library uses `anyio` streams to efficiently move data between coroutines.  Each stream has a sending end, and a receivine end; which when combined act as a "bounded queue".  Keys are placed onto the stream as we scan the bucket, and are processed by `N` number of consumers listening to the stream.  Each consumer (a python coroutine) is responsbile for fetching/parsing the TIFF header and placing the results on the output stream.  A single coroutine listens to the output stream and writes the outputs to parquet.
+The library uses `anyio` streams to efficiently move data between coroutines.  Each stream has a sending end, and a receivine end; which when combined act as a "bounded queue".  Keys are placed onto the stream as we scan the bucket, and are processed by `N` number of consumers listening to the stream.  Each consumer (a python coroutine) is responsbile for fetching/parsing the TIFF header and placing the results on the output stream.  A single coroutine listens to the output stream and writes the headers to parquet.
 
 This provides decoupling between listing the bucket, reading/parsing TIFF headers, and writing to parquet; allowing these things to scale independendently of each other.  This decoupling allows us to more efficiently saturate the host machine's network bandwidth compared to the simpler approach of processing each page of LIST requests as we receive them (ex. with `asyncio.gather`).
 
