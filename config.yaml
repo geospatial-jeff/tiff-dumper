@@ -1,0 +1,30 @@
+store:
+  # The name of the store to list.
+  name: s3://sentinel-cogs
+  # A list of prefixes to scan, leave empty to scane the entire store.
+  prefixes:
+    - sentinel-s2-l2a-cogs/10/C
+  # Configuration passed directly to `obstore`
+  obstore_config:
+    skip_signature: True
+    region: us-west-2
+concurrency:
+  # The number of concurrent consumers (coroutines) used when fetching
+  # tiff headers.  Each consumer is responsible for dumping one key
+  # at a time.  This should be set to a number less or equal
+  # to `list_chunk_size` to provide backpresure.
+  n_consumers: 1000
+
+  # The number of keys to include in each page returned by the list request.
+  list_chunk_size: 10000
+
+  # The number of keys to buffer in memory before blocking production
+  # against the stream.  This should be set higher than `list_chunk_size`,
+  # such that the results of multiple list requests may be buffered in memory.
+  # `list_chunk_size` should also divide evenly into `max_buffer_size` for optimal
+  # memory efficiency.
+  max_buffer_size: 1000000
+
+  # How many keys to include in each `.parquet` file written to disk.  This should
+  # be set larger than `list_chunk_size` but smaller than `max_buffer_size`.
+  write_chunk_size: 100000
