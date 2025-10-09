@@ -2,13 +2,16 @@ import asyncio
 import logging
 import os
 import uuid
+from functools import lru_cache
 
 import geopandas as gpd
 import obstore as obs
 from anyio import create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from async_tiff import TIFF
+from pyproj import Transformer
 from shapely.geometry import Polygon
+from shapely.ops import transform
 
 from tiff_dumper.stores import Stores
 
@@ -22,6 +25,11 @@ EXCLUDE_TAGS = {
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+@lru_cache()
+def get_transformer(in_epsg: str, out_epsg: str) -> Transformer:
+    return Transformer.from_crs(in_epsg, out_epsg, always_xy=True)
 
 
 async def _get_profile(stores: Stores, path: str):
@@ -61,7 +69,13 @@ async def _get_profile(stores: Stores, path: str):
         ymin = ymax + (first_ifd.image_width * xres)
         xmax = xmin + (first_ifd.image_width * xres)
         polygon = Polygon.from_bounds(xmin, ymin, xmax, ymax)
-    profile["geometry"] = polygon
+
+    # Reproject geometry to WGS84
+    epsg_code = first_ifd.geo_key_directory.projected_type
+    transformer = get_transformer(in_epsg=epsg_code, out_epsg=4326)
+    wgs84_geometry = transform(transformer.transform, polygon)
+    profile["geometry"] = wgs84_geometry
+
     return profile
 
 
