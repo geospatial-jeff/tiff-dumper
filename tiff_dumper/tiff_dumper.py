@@ -2,12 +2,16 @@ import asyncio
 import logging
 import os
 import uuid
+from functools import lru_cache
 
+import geopandas as gpd
 import obstore as obs
-import pandas as pd
 from anyio import create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from async_tiff import TIFF
+from pyproj import Transformer
+from shapely.geometry import Polygon
+from shapely.ops import transform
 
 from tiff_dumper.stores import Stores
 
@@ -21,6 +25,11 @@ EXCLUDE_TAGS = {
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+@lru_cache()
+def get_transformer(in_epsg: str, out_epsg: str) -> Transformer:
+    return Transformer.from_crs(in_epsg, out_epsg, always_xy=True)
 
 
 async def _get_profile(stores: Stores, path: str):
@@ -41,6 +50,32 @@ async def _get_profile(stores: Stores, path: str):
         **tiff_tags,
         "geokeys": geokeys,
     }
+
+    if model_transformation := first_ifd.other_tags.get(34264):
+        xres = model_transformation[0]
+        xmin = model_transformation[3]
+        yres = model_transformation[5]
+        ymin = model_transformation[7]
+
+        xmax = xmin + (first_ifd.image_width * xres)
+        ymax = ymin + (first_ifd.image_height * yres)
+        polygon = Polygon.from_bounds(xmin, ymin, xmax, ymax)
+    else:
+        xres = first_ifd.model_pixel_scale[0]
+        xmin = first_ifd.model_tiepoint[3]
+        yres = -first_ifd.model_pixel_scale[1]
+        ymax = first_ifd.model_tiepoint[4]
+
+        ymin = ymax + (first_ifd.image_width * xres)
+        xmax = xmin + (first_ifd.image_width * xres)
+        polygon = Polygon.from_bounds(xmin, ymin, xmax, ymax)
+
+    # Reproject geometry to WGS84
+    epsg_code = first_ifd.geo_key_directory.projected_type
+    transformer = get_transformer(in_epsg=epsg_code, out_epsg=4326)
+    wgs84_geometry = transform(transformer.transform, polygon)
+    profile["geometry"] = wgs84_geometry
+
     return profile
 
 
@@ -79,7 +114,7 @@ async def _producer(
 
 
 def _write_parquet(records, filepath):
-    df = pd.DataFrame.from_records(records)
+    df = gpd.GeoDataFrame.from_records(records)
     df.to_parquet(filepath)
     logger.debug(f"Wrote parquet - {filepath}")
 
