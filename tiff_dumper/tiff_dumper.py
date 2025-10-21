@@ -72,7 +72,7 @@ async def _get_profile(stores: Stores, path: str):
         yres = -first_ifd.model_pixel_scale[1]
         ymax = first_ifd.model_tiepoint[4]
 
-        ymin = ymax + (first_ifd.image_width * xres)
+        ymin = ymax + (first_ifd.image_height * yres)
         xmax = xmin + (first_ifd.image_width * xres)
         polygon = Polygon.from_bounds(xmin, ymin, xmax, ymax)
 
