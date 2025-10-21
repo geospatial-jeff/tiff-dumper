@@ -12,6 +12,7 @@ from async_tiff import TIFF
 from pyproj import Transformer
 from shapely.geometry import Polygon
 from shapely.ops import transform
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_random
 
 from tiff_dumper.stores import Stores
 
@@ -32,8 +33,13 @@ def get_transformer(in_epsg: str, out_epsg: str) -> Transformer:
     return Transformer.from_crs(in_epsg, out_epsg, always_xy=True)
 
 
+@retry(wait=wait_fixed(1) + wait_random(0, 2), stop=stop_after_attempt(3))
+async def _open_tiff_with_retry(*args, **kwargs) -> TIFF:
+    return await TIFF.open(*args, **kwargs)
+
+
 async def _get_profile(stores: Stores, path: str):
-    tiff = await TIFF.open(path, store=stores.tiff_store, prefetch=65536)
+    tiff = await _open_tiff_with_retry(path, store=stores.tiff_store, prefetch=65536)
     first_ifd = tiff.ifds[0]
 
     tiff_tags = {
@@ -82,19 +88,29 @@ async def _get_profile(stores: Stores, path: str):
 async def _consumer(
     receive: MemoryObjectReceiveStream[str],
     send_output: MemoryObjectSendStream[dict],
+    send_error: MemoryObjectSendStream[dict],
     stores,
 ):
     """Consume"""
     logger.debug("starting consumer")
-    async with send_output:
-        async with receive:
-            async for item in receive:
+    async with send_output, send_error, receive:
+        async for item in receive:
+            try:
                 try:
                     profile = await _get_profile(stores, item)
                     profile["path"] = item
                     await send_output.send(item=profile)
-                except TimeoutError:
-                    logger.debug(f"Timed out on {item}")
+                except Exception as exc:
+                    error_payload = {
+                        "path": item,
+                        "error_type": exc.__class__.__name__,
+                        "error_message": str(exc),
+                    }
+                    await send_error.send(item=error_payload)
+                    logger.exception("Error reading image %s", item)
+                    continue
+            except TimeoutError:
+                logger.debug(f"Timed out on {item}")
     logger.debug("closing consumer")
 
 
@@ -141,9 +157,33 @@ async def _write_out(
             idx += 1
 
         # Write remaining records before closing stream
-        await _write_parquet_async(
-            records, os.path.join(out_dir, f"{str(uuid.uuid4())}.parquet")
-        )
+        if records:
+            await _write_parquet_async(
+                records, os.path.join(out_dir, f"{str(uuid.uuid4())}.parquet")
+            )
+
+
+async def _write_out_errors(
+    receive: MemoryObjectReceiveStream[dict], chunk_size: int, out_dir: str
+):
+    async with receive:
+        records = []
+        idx = 0
+        async for item in receive:
+            records.append(item)
+            if idx > chunk_size:
+                await _write_parquet_async(
+                    records, os.path.join(out_dir, f"{str(uuid.uuid4())}.parquet")
+                )
+                idx = 0
+                records = []
+            idx += 1
+
+        # Write remaining records before closing stream
+        if records:
+            await _write_parquet_async(
+                records, os.path.join(out_dir, f"{str(uuid.uuid4())}.parquet")
+            )
 
 
 async def _monitor(channel):
@@ -177,18 +217,28 @@ async def dump_headers(
             send_output, receive_output = create_memory_object_stream(
                 max_buffer_size, item_type=dict
             )
+            send_error, receive_error = create_memory_object_stream(
+                max_buffer_size, item_type=dict
+            )
 
             # Start the monitor
             if not quiet:
                 tg.start_soon(_monitor, send)
 
             # Start the consumers
-            streams = [(receive, send_output)]
+            streams = [(receive, send_output, send_error)]
             for _ in range(n_consumers - 1):
-                streams.append((receive.clone(), send_output.clone()))
+                streams.append(
+                    (receive.clone(), send_output.clone(), send_error.clone())
+                )
             for stream in streams:
                 tg.start_soon(_consumer, *stream, stores)
             tg.start_soon(_write_out, receive_output, write_chunk_size, out_dir)
+
+            # Write out errors
+            error_dir = os.path.join(out_dir, "errors")
+            os.makedirs(error_dir)
+            tg.start_soon(_write_out_errors, receive_error, write_chunk_size, error_dir)
 
             # Start the producer
             tg.start_soon(_producer, send, stores, prefixes, list_chunk_size)
